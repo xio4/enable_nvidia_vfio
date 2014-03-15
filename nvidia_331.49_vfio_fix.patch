@@ -1,0 +1,90 @@
+diff -rup NVIDIA-Linux-x86_64-331.49/kernel/nv.c NVIDIA-Linux-x86_64-331.49_fix/kernel/nv.c
+--- NVIDIA-Linux-x86_64-331.49/kernel/nv.c	2014-02-13 09:56:05.000000000 +0600
++++ NVIDIA-Linux-x86_64-331.49_fix/kernel/nv.c	2014-03-15 14:50:56.000000000 +0600
+@@ -15,6 +15,10 @@
+ #include "nv-reg.h"
+ #include "rmil.h"
+ 
++#include <linux/string.h>
++#include <linux/fs.h>     
++#include <asm/uaccess.h> 
++
+ #if defined(NV_UVM_ENABLE) || defined(NV_UVM_NEXT_ENABLE)
+ #include "nv_uvm_interface.h"
+ #endif
+@@ -184,6 +188,57 @@ struct semaphore nv_bind_unbind_lock;
+         }                                                                  \
+     }
+ 
++// This code parses /proc/cmdline on 'enable_nvidia_vfio' existance
++// Start code
++#define ENABLE_NVIDIA_VFIO_CMD "enable_nvidia_vfio"
++#define CMDLINE_MAX_LEN 1000
++#define CMDLINE_NO_PARSE -1
++#define CMDLINE_FOUND_ENABLE_NVIDIA_VFIO 1
++#define CMDLINE_PATH "/proc/cmdline"
++
++int parse_cmdline()
++{
++	static int res = CMDLINE_NO_PARSE;
++	if (res > CMDLINE_NO_PARSE) {
++		return res;
++	}
++	else {
++		char buf[CMDLINE_MAX_LEN];
++		int i;
++		struct file *fd;
++		mm_segment_t fs;
++
++		for (i=0; i < CMDLINE_MAX_LEN; ++i) {
++			buf[i] = '\0';
++		}
++
++		fd = filp_open(CMDLINE_PATH, O_RDONLY, 0);
++
++		if (IS_ERR(fd)) {
++			printk(KERN_ALERT "/proc/cmdline open error!");
++			return res;
++		}
++		else {
++
++			fs = get_fs();
++			set_fs(get_ds());
++			fd->f_op->read(fd, buf, CMDLINE_MAX_LEN, &fd->f_pos);
++			set_fs(fs);
++
++			if (strstr(buf, ENABLE_NVIDIA_VFIO_CMD) != NULL) {
++				printk(KERN_INFO "command [enable_nvidia_vfio] is found");
++				res = CMDLINE_FOUND_ENABLE_NVIDIA_VFIO;
++			}
++			else {
++				printk(KERN_INFO "command [enable_nvidia_vfio] is not found");
++			}
++		}
++		filp_close(fd, NULL);
++	}
++	return res;
++}
++// End code
++
+ static void
+ verify_pci_bars(
+     nv_state_t  *nv,
+@@ -2995,14 +3050,16 @@ nvidia_probe
+ 
+     nv->interrupt_line = dev->irq;
+ 
+-    pci_set_master(dev);
++	 pci_set_master(dev);
+ 
++	 if (parse_cmdline() != CMDLINE_FOUND_ENABLE_NVIDIA_VFIO) {
+ #if defined(CONFIG_VGA_ARB)
+ #if defined(VGA_DEFAULT_DEVICE)
+     vga_tryget(VGA_DEFAULT_DEVICE, VGA_RSRC_LEGACY_MASK);
+ #endif
+     vga_set_legacy_decoding(dev, VGA_RSRC_NONE);
+ #endif
++	 }
+ 
+     if (NV_IS_GVI_DEVICE(nv))
+     {
